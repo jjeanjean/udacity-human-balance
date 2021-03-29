@@ -4,8 +4,41 @@ from pyspark.sql.types import StructField, StructType, StringType, BooleanType, 
 
 # TO-DO: using the spark application object, read a streaming dataframe from the Kafka topic stedi-events as the source
 # Be sure to specify the option that reads all the events from the topic including those that were published before you started the spark stream
+
+redisMessageSchema = StructType(
+    [
+        StructField("key", StringType()),
+        StructField("value", StringType()),
+        StructField("expiredType", StringType()),
+        StructField("expiredValue",StringType()),
+        StructField("existType", StringType()),
+        StructField("ch", StringType()),
+        StructField("incr",BooleanType()),
+        StructField("zSetEntries", ArrayType( \
+            StructType([
+                StructField("element", StringType()),\
+                StructField("score", StringType())   \
+            ]))                                      \
+        )
+
+    ]
+)
+
+customerRiskMessageSchema = StructType(
+    [
+        StructField('customer', StringType()),
+        StructField('score', StringType()),
+        StructField('riskDate', StringType())
+    ]
+)
+
+spark=SparkSession.builder.appName('stedis-event').getOrCreate()
+spark.sparkContext.setLogLevel('WARN')
+
+redisEventsRawStreamingDF = spark.readStream.format('kafka').option('kafka.bootstrap.servers','localhost:9092').option('subscribe','stedi-events').option('startingOffsets','earliest').load()
                                    
 # TO-DO: cast the value column in the streaming dataframe as a STRING 
+redisEventsStreamingDF=redisEventsRawStreamingDF.selectExpr('cast(key as string) key', 'cast(value as string) value')
 
 # TO-DO: parse the JSON from the single column "value" with a json object in it, like this:
 # +------------+
@@ -22,7 +55,11 @@ from pyspark.sql.types import StructField, StructType, StringType, BooleanType, 
 # +------------+-----+-----------+
 #
 # storing them in a temporary view called CustomerRisk
+redisEventsStreamingDF.withColumn('value', from_json('value',customerRiskMessageSchema)).select(col('value.*')).createOrReplaceTempView('CustomerRisk')
+
 # TO-DO: execute a sql statement against a temporary view, selecting the customer and the score from the temporary view, creating a dataframe called customerRiskStreamingDF
+customerRiskStreamingDF=spark.sql('select customer, score from CustomerRisk')
+
 # TO-DO: sink the customerRiskStreamingDF dataframe to the console in append mode
 # 
 # It should output like this:
@@ -35,3 +72,4 @@ from pyspark.sql.types import StructField, StructType, StringType, BooleanType, 
 # Run the python script by running the command from the terminal:
 # /home/workspace/submit-event-kafka-streaming.sh
 # Verify the data looks correct 
+customerRiskStreamingDF.writeStream.outputMode("append").format("console").start().awaitTermination()
